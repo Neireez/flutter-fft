@@ -1,38 +1,59 @@
 group 'com.slins.flutterfft'
 version '1.0'
+
 buildscript {
     repositories {
         google()
-        jcenter()
+        mavenCentral()
     }
 
     dependencies {
-        classpath 'com.android.tools.build:gradle:3.4.0'
+        classpath 'com.android.tools.build:gradle:7.3.0'
     }
 }
+
 rootProject.allprojects {
     repositories {
         google()
-        jcenter()
+        mavenCentral()
     }
 }
+
 apply plugin: 'com.android.library'
+
 android {
-    namespace "com.slins.flutterfft"
-    compileSdkVersion 30
+    namespace 'com.slins.flutterfft'
+    compileSdkVersion 33
 
     defaultConfig {
-        minSdkVersion 24
+        minSdkVersion 21
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
+
     lintOptions {
         disable 'InvalidPackage'
+        disable 'GradleDependency'
     }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    tasks.withType(JavaCompile) {
+        options.compilerArgs << "-Xlint:deprecation"
     }
 }
 
 dependencies {
     implementation files('libs/TarsosDSP.jar')
+    implementation 'androidx.annotation:annotation:1.5.0'
+}
+
+// Add this to avoid the warning about the V1 embedding
+// This will be removed in a future version of the plugin
+gradle.projectsEvaluated {
+    tasks.withType(JavaCompile) {
+        options.compilerArgs << "-Xlint:unchecked" << "-Xlint:deprecation"
+    }
 }
