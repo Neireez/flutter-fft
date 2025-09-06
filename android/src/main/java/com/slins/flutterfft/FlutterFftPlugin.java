@@ -12,7 +12,6 @@ import android.app.Activity;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Executor;
 
 import be.tarsos.dsp.pitch.FastYin;
 
@@ -20,27 +19,22 @@ import androidx.annotation.NonNull;
 import androidx.annotation.RequiresApi;
 import androidx.core.app.ActivityCompat;
 
-import io.flutter.plugin.common.PluginRegistry;
-import io.flutter.plugin.common.PluginRegistry.Registrar;
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
 import io.flutter.plugin.common.MethodChannel.Result;
+import io.flutter.plugin.common.PluginRegistry;
 
 import io.flutter.embedding.engine.plugins.activity.ActivityAware;
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
 
 /** FlutterFftPlugin */
-public class FlutterFftPlugin implements ActivityAware, FlutterPlugin, PluginRegistry.RequestPermissionsResultListener, AudioInterface, MethodCallHandler {
-  /// The MethodChannel that will the communication between Flutter and native Android
-  ///
-  /// This local reference serves to register the plugin with the Flutter Engine and unregister it
-  /// when the Flutter Engine is detached from the Activity
-
-  final public static String TAG = "FlutterFftPlugin"; // ANDROID STUDIO DEBUG CHANNEL
-
-  final private static String RECORD_STREAM = "com.slins.flutterfft/record"; // PLATFORM CHANNEL NAME
+public class FlutterFftPlugin implements FlutterPlugin, ActivityAware, PluginRegistry.RequestPermissionsResultListener, AudioInterface, MethodCallHandler {
+  
+  final public static String TAG = "FlutterFftPlugin";
+  final private static String RECORD_STREAM = "com.slins.flutterfft/record";
+  
   // ERROR CODES
   public static final String ERROR_MIC_PERMISSSION_DENIED = "ERROR_MIC_PERMISSION_DENIED";
   public static final String ERROR_RECORDER_IS_NULL = "ERROR_RECORDER_IS_NULL";
@@ -51,253 +45,300 @@ public class FlutterFftPlugin implements ActivityAware, FlutterPlugin, PluginReg
   public static final String ERROR_WRONG_BUFFER_SIZE = "ERROR_WRONG_BUFFER_SIZE";
   public static final String ERROR_FAILED_FREQUENCIES_AND_OCTAVES_INSTANTIATION = "ERROR_FAILED_FREQUENCIES_AND_OCTAVES_INSTANTIATION";
 
-  public static int bufferSize; // AUDIO DATA BUFFER SIZE
-
+  public static int bufferSize;
   private boolean doneBefore = false;
 
-  public static float frequency = 0; // FREQUENCY THAT GETS RETURNED TO THE FLUTTER APPLICATION
-
-  public static String note = ""; // NOTE THAT GETS RETURNED TO THE FLUTTER APPLICATION
+  public static float frequency = 0;
+  public static String note = "";
   public static float target = 0;
   public static float distance = 0;
-  public static int octave = 0; // OCTAVE THAT GETS RETURNED TO THE FLUTTER APPLICATION
+  public static int octave = 0;
 
   public static String nearestNote = "";
   public static float nearestTarget = 0;
   public static float nearestDistance = 0;
   public static int nearestOctave = 0;
 
-  private final ExecutorService taskScheduler = Executors.newSingleThreadExecutor(); // MAIN THREAD
+  private final ExecutorService taskScheduler = Executors.newSingleThreadExecutor();
+  private final AudioModel audioModel = new AudioModel();
+  private final PitchModel pitchModel = new PitchModel();
 
-//  private static Registrar reg; // REGISTERED PLUGIN
-//    private final Activity activity;
-//
-//    FlutterFftPlugin(Activity activity) {
-//        this.activity = activity;
-//    }
+  // Changed to static to be accessible from PitchModel
+  public static MethodChannel channel;
+  private ActivityPluginBinding activityBinding;
+  private Activity activity;
 
-  final private AudioModel audioModel = new AudioModel(); // INITIALIZATION OF AUDIO MODEL CLASS
-  final private PitchModel pitchModel = new PitchModel(); // INITIALIZATION OF PITCH MODEL CLASS
+  // Make these public static so PitchModel can access them
+  public static Handler recordHandler;
+  public static Handler mainHandler;
+  public static MethodChannel staticChannel;
 
-  public static MethodChannel channel; // PLATFORM CHANNEL
-
-  final static public Handler recordHandler = new Handler(); // RECORDER HANDLER
-  final static public Handler mainHandler = new Handler(); // MAIN APPLICATION HANDLER
-
-    private ActivityPluginBinding activityBinding;
-    private Activity activity;
-
+  // FlutterPlugin implementation
   @Override
   public void onAttachedToEngine(@NonNull FlutterPluginBinding flutterPluginBinding) {
-    // channel = new MethodChannel(flutterPluginBinding.getBinaryMessenger(), "flutter_fft");
+    // Initialize the method channel
     channel = new MethodChannel(flutterPluginBinding.getBinaryMessenger(), RECORD_STREAM);
     channel.setMethodCallHandler(this);
-  }
-
-  @Override
-  public void onAttachedToActivity(@NonNull ActivityPluginBinding binding) {
-      activityBinding = binding;
-      activity = binding.getActivity();
-  }
-
-  public boolean checkPermission() { // Checks whether mic permission was given
-      if (ActivityCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-//          Log.d(TAG, "Different: " + ActivityCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) + " | " + PackageManager.PERMISSION_GRANTED);
-          return false;
-      }
-
-      return true;
-  }
-
-  public void requestPermission() { // Requests mic permission
-      ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.RECORD_AUDIO}, 0);
-  }
-
-  @RequiresApi(api = Build.VERSION_CODES.N)
-  @Override
-  public void onMethodCall(@NonNull MethodCall call, @NonNull Result result) {
-    // result.success(10);
-    switch (call.method) {
-      case "startRecorder": // WHEN "startRecorder" GETS CALLED FROM FLUTTER, RUN LOCAL startRecorder method, with given parameters
-            taskScheduler.submit(() -> {
-                List<Object> tuning = call.argument("tuning");
-                Integer sampleRate = call.argument("sampleRate"); // SAMPLE RATE, DEFAULT: 22050
-                Integer numChannels = call.argument("numChannels"); // NUMBER OF CHANNELS, DEFAULT: 1
-                int androidAudioSource = call.argument("androidAudioSource"); // AUDIO SOURCE, DEFAULT: MICROPHONE
-                double tolerance = call.argument("tolerance"); // HOW APART CAN THE CURRENT PITCH AND TARGET PITCH BE TO CONSIDER IT ON PITCH, DEFAULT: 1.0
-                startRecorder(tuning, numChannels, sampleRate, androidAudioSource, (float) tolerance, result); // CALL LOCAL "startRecorder" METHOD (JAVA IMPLEMENTATION)
-            });
-          break;
-      case "stopRecorder":
-          taskScheduler.submit(() -> stopRecorder(result));  // CALL METHOD THAT STOPS RECORDING
-          break;
-      case "setSubscriptionDuration":
-          if (call.argument("sec") == null) return;
-          double duration = call.argument("sec");
-          setSubscriptionDuration(duration, result); // SET DURATION OF SUBSCRIPTION, IN OTHER WORDS, INTERVAL BETWEEN PITCH ESTIMATIONS
-          break;
-        case "checkPermission":
-            result.success(checkPermission());
-            break;
-        case "requestPermission":
-            requestPermission();
-            break;
-      default:
-          result.notImplemented(); // IF THE METHOD THAT WAS CALLED FROM FLUTTER IS NOT ONE OF THE ABOVE, RETURN THIS
-          break;
-      }
-  }
-
-  @Override
-  public boolean onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) { // CHECK IF MICROPHONE RECORDING PERMISSION IS GRANTED
-      Log.d(TAG, "Permission start");
-      final int REQUEST_RECORD_AUDIO_PERMISSION = 200;
-      switch (requestCode) {
-      case REQUEST_RECORD_AUDIO_PERMISSION:
-          if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-              Log.d(TAG, "Permission end1");
-              return true;
-          }
-          break;
-      }
-      Log.d(TAG, "Permission end2");
-      return false;
-  }
-
-  public static void printError(String message, Exception err) {
-      Log.d(TAG, message + ". Error: " + err.toString());
-  }
-
-  public static void printError(String message) {
-      Log.d(TAG, message + ".");
-  }
-
-  @RequiresApi(api = Build.VERSION_CODES.N)
-  @Override
-  public void startRecorder(List<Object> tuning, Integer numChannels, Integer sampleRate, int androidAudioSource, Float tolerance, final Result result) { // START RECORDING
-      checkIfPermissionGranted(); // CHECKS IF PERMISSION IS GRANTED
-
-      if (!doneBefore) {
-          try {
-              pitchModel.getFrequenciesAndOctaves(result);
-              doneBefore = true;
-          }
-          catch(Exception err) {
-             printError("Could not get frequencies and octaves", err);
-             return;
-          }
-      }
-
-      initializeAudioRecorder(result, tuning, sampleRate, numChannels, androidAudioSource, tolerance); // INITIALIZE THE AUDIO RECORDER
-
-      audioModel.getAudioRecorder().startRecording(); // START THE AUDIO RECORDER
-      recordHandler.removeCallbacksAndMessages(null);
-
-      audioModel.setRecorderTicker(() -> pitchModel.updateFrequencyAndNote(result, audioModel)); // PROCESS AUDIO IN LOOP
-
-      recordHandler.post(audioModel.getRecorderTicker()); // UPDATES RECORD HANDLER
-
-      mainHandler.post(new Runnable() {
-          @Override
-          public void run() {
-              result.success("Recorder successfully set up.");
-          }
-      }); // UPDATES THE MAIN HANDLER
-  }
-
-  @Override
-  public void stopRecorder(final Result result) { // STOP RECORDING
-      recordHandler.removeCallbacksAndMessages(null);
-
-      if (audioModel.getAudioRecorder() == null) { // IF THE AUDIO RECORDER IS ALREADY NULL, IN OTHER WORDS, ALREADY STOPPED, RETURN AN ERROR
-          FlutterFftPlugin.printError("Recorder is null and cannot be stopped.");
-          return;
-//          result.error(ERROR_RECORDER_IS_NULL, "Can't stop recorder, it is NULL.", null);
-      }
-
-      audioModel.getAudioRecorder().stop();
-      audioModel.getAudioRecorder().release();
-      audioModel.setAudioRecorder(null);
-
-      mainHandler.post(new Runnable() { // UPDATES THE MAIN HANDLER
-          @Override
-          public void run() {
-              result.success("Recorder stopped.");
-          }
-      });
-  }
-
-  @Override
-  public void setSubscriptionDuration(double sec, Result result) { // SET SUBSCRIPTION DURATION/INTERVAL (TIME INTERVAL IN WHICH THE PITCH GETS UPDATED)
-      audioModel.subsDurationMillis = (int) (sec * 1000);
-      result.success("setSubscriptionDuration: " + audioModel.subsDurationMillis);
-  }
-
-  @Override
-  public void checkIfPermissionGranted() {
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-          if (ActivityCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-              ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.RECORD_AUDIO}, 0);
-
-//              if (ActivityCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-//                  result.error(ERROR_MIC_PERMISSSION_DENIED, "Microphone permission denied.", null);
-//              }
-          }
-      }
-  }
-
-  @Override
-  public void initializeAudioRecorder(Result result, List<Object> tuning, Integer sampleRate, Integer numChannels, int androidAudioSource, Float tolerance) {
-      if (audioModel.getAudioRecorder() == null) { // IF THE AUDIO RECORDER IS NOT NULL, IN OTHER WORDS, NOT ALREADY RUNNING, WE START IT
-          bufferSize = 0;
-
-          try {
-              bufferSize = AudioRecord.getMinBufferSize(sampleRate, numChannels, audioModel.audioFormat) * 3; // CALCULATE AND UPDATE BUFFER SIZE
-
-              if (bufferSize != AudioRecord.ERROR_BAD_VALUE) { // CONTINUE WITH THE PROCESS IF THE BUFFER SIZE IS VALID, OTHERWISE RETURN AN ERROR
-                  audioModel.setAudioRecorder(new AudioRecord(androidAudioSource, sampleRate, numChannels, audioModel.audioFormat, bufferSize)); // RECORDER INSTANTIATION
-                  audioModel.setAudioData(new short[bufferSize / 2]); // AUDIO BUFFER INSTANTIATION
-                  pitchModel.setPitchDetector(new FastYin(sampleRate, bufferSize / 2)); // PITCH DETECTOR INSTANTIATION
-                  pitchModel.setTolerance(tolerance);
-                  pitchModel.setTuning(tuning);
-              }
-
-              else {
-                  printError("Failed to initialize recorder, wrong buffer data: " + bufferSize);
-                  return;
-//                  result.error(ERROR_WRONG_BUFFER_SIZE, "Failed to initialize recorder, wrong buffer data: " + bufferSize, null);
-              }
-
-          } catch (Exception e) {
-              printError("Failed to initialize recorder.", e);
-              return;
-//              result.error(ERROR_FAILED_RECORDER_INITIALIZATION, "Error: " + e.toString(), null);
-          }
-
-
-      } else {
-          audioModel.getAudioRecorder().release();
-      }
+    
+    // Initialize static references for PitchModel
+    staticChannel = channel;
+    recordHandler = new Handler(Looper.getMainLooper());
+    mainHandler = new Handler(Looper.getMainLooper());
+    
+    // Register the plugin with the new plugin registry
+    flutterPluginBinding.getPlatformViewRegistry().registerViewFactory(
+        "plugins.flutter_fft/view",
+        new FlutterFftViewFactory(flutterPluginBinding.getBinaryMessenger())
+    );
   }
 
   @Override
   public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
     channel.setMethodCallHandler(null);
+    channel = null;
+    staticChannel = null;
+    recordHandler = null;
+    mainHandler = null;
+    
+    // Clean up resources
+    stopRecorderInternal();
+    taskScheduler.shutdown();
   }
 
+  // ActivityAware implementation
   @Override
-  public void onDetachedFromActivityForConfigChanges() {
-      onDetachedFromActivity();
-  }
-
-  @Override
-  public void onReattachedToActivityForConfigChanges(@NonNull ActivityPluginBinding binding) {
-      onAttachedToActivity(binding);
+  public void onAttachedToActivity(@NonNull ActivityPluginBinding binding) {
+    activityBinding = binding;
+    activity = binding.getActivity();
+    binding.addRequestPermissionsResultListener(this);
   }
 
   @Override
   public void onDetachedFromActivity() {
+    if (activityBinding != null) {
       activityBinding.removeRequestPermissionsResultListener(this);
       activityBinding = null;
+    }
+    activity = null;
+    
+    // Stop any ongoing recording
+    stopRecorderInternal();
+  }
+
+  @Override
+  public void onReattachedToActivityForConfigChanges(@NonNull ActivityPluginBinding binding) {
+    onAttachedToActivity(binding);
+  }
+
+  @Override
+  public void onDetachedFromActivityForConfigChanges() {
+    if (activityBinding != null) {
+      activityBinding.removeRequestPermissionsResultListener(this);
+      activityBinding = null;
+    }
+    activity = null;
+  }
+
+  // Permission handling
+  public boolean checkPermission() {
+    if (activity == null) {
+      return false;
+    }
+    return ActivityCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+  }
+
+  public void requestPermission() {
+    if (activity != null) {
+      ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.RECORD_AUDIO}, 200);
+    }
+  }
+
+  @Override
+  public boolean onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+    final int REQUEST_RECORD_AUDIO_PERMISSION = 200;
+    if (requestCode == REQUEST_RECORD_AUDIO_PERMISSION) {
+      if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+        Log.d(TAG, "Permission granted");
+        return true;
+      }
+    }
+    Log.d(TAG, "Permission denied");
+    return false;
+  }
+
+  // Method call handling
+  @Override
+  public void onMethodCall(@NonNull MethodCall call, @NonNull Result result) {
+    switch (call.method) {
+      case "startRecorder":
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+          taskScheduler.submit(() -> {
+            List<Object> tuning = call.argument("tuning");
+            Integer sampleRate = call.argument("sampleRate");
+            Integer numChannels = call.argument("numChannels");
+            Integer androidAudioSource = call.argument("androidAudioSource");
+            Double tolerance = call.argument("tolerance");
+            
+            if (sampleRate == null || numChannels == null || androidAudioSource == null || tolerance == null) {
+              mainHandler.post(() -> result.error("INVALID_ARGUMENTS", "Missing required arguments", null));
+              return;
+            }
+            
+            startRecorder(tuning, numChannels, sampleRate, androidAudioSource, tolerance.floatValue(), result);
+          });
+        } else {
+          result.error("UNSUPPORTED_VERSION", "Android API level 24 or higher is required", null);
+        }
+        break;
+      case "stopRecorder":
+        taskScheduler.submit(() -> stopRecorder(result));
+        break;
+      case "setSubscriptionDuration":
+        Double duration = call.argument("sec");
+        if (duration == null) {
+          result.error("INVALID_ARGUMENTS", "Duration cannot be null", null);
+          return;
+        }
+        setSubscriptionDuration(duration, result);
+        break;
+      case "checkPermission":
+        result.success(checkPermission());
+        break;
+      case "requestPermission":
+        requestPermission();
+        result.success(null);
+        break;
+      default:
+        result.notImplemented();
+        break;
+    }
+  }
+
+  // AudioInterface implementation
+  @Override
+  public void startRecorder(List<Object> tuning, Integer numChannels, Integer sampleRate, int androidAudioSource, Float tolerance, final Result result) {
+    if (!hasAudioPermission()) {
+      mainHandler.post(() -> result.error(ERROR_MIC_PERMISSSION_DENIED, "Microphone permission denied", null));
+      return;
+    }
+
+    if (!doneBefore) {
+      try {
+        pitchModel.getFrequenciesAndOctaves(result);
+        doneBefore = true;
+      } catch (Exception err) {
+        printError("Could not get frequencies and octaves", err);
+        mainHandler.post(() -> result.error(ERROR_FAILED_FREQUENCIES_AND_OCTAVES_INSTANTIATION, err.getMessage(), null));
+        return;
+      }
+    }
+
+    // Call initializeAudioRecorder which will handle the result asynchronously
+    initializeAudioRecorder(result, tuning, sampleRate, numChannels, androidAudioSource, tolerance);
+    
+    try {
+      audioModel.getAudioRecorder().startRecording();
+      recordHandler.removeCallbacksAndMessages(null);
+
+      audioModel.setRecorderTicker(() -> pitchModel.updateFrequencyAndNote(result, audioModel));
+      recordHandler.post(audioModel.getRecorderTicker());
+
+      mainHandler.post(() -> result.success("Recorder successfully set up."));
+    } catch (Exception e) {
+      printError("Failed to start recorder", e);
+      mainHandler.post(() -> result.error(ERROR_FAILED_RECORDER_INITIALIZATION, e.getMessage(), null));
+    }
+  }
+
+  @Override
+  public void stopRecorder(final Result result) {
+    stopRecorderInternal();
+    mainHandler.post(() -> result.success("Recorder stopped."));
+  }
+
+  private void stopRecorderInternal() {
+    recordHandler.removeCallbacksAndMessages(null);
+
+    if (audioModel.getAudioRecorder() != null) {
+      try {
+        audioModel.getAudioRecorder().stop();
+        audioModel.getAudioRecorder().release();
+      } catch (Exception e) {
+        Log.e(TAG, "Error stopping recorder", e);
+      } finally {
+        audioModel.setAudioRecorder(null);
+      }
+    }
+  }
+
+  @Override
+  public void setSubscriptionDuration(double sec, Result result) {
+    audioModel.subsDurationMillis = (int) (sec * 1000);
+    result.success("setSubscriptionDuration: " + audioModel.subsDurationMillis);
+  }
+
+  @Override
+  public void checkIfPermissionGranted() {
+    // This method is part of AudioInterface and should not return a value
+    // The actual permission check is done in the hasAudioPermission() method
+    // This is a no-op as the permission check is handled by hasAudioPermission()
+  }
+  
+  // This is a helper method that returns a boolean
+  public boolean hasAudioPermission() {
+    if (activity == null) {
+      return false;
+    }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      return ActivityCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+    }
+    return true;
+  }
+
+  @Override
+  public void initializeAudioRecorder(Result result, List<Object> tuning, Integer sampleRate, Integer numChannels, int androidAudioSource, Float tolerance) {
+    if (audioModel.getAudioRecorder() != null) {
+      audioModel.getAudioRecorder().release();
+      audioModel.setAudioRecorder(null);
+    }
+
+    try {
+      // Convert channel configuration properly
+      int channelConfig = (numChannels == 1) ? android.media.AudioFormat.CHANNEL_IN_MONO : android.media.AudioFormat.CHANNEL_IN_STEREO;
+      
+      bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioModel.audioFormat) * 3;
+
+      if (bufferSize <= 0 || bufferSize == AudioRecord.ERROR_BAD_VALUE) {
+        printError("Failed to initialize recorder, wrong buffer data: " + bufferSize);
+        mainHandler.post(() -> result.error(ERROR_WRONG_BUFFER_SIZE, "Failed to initialize recorder, wrong buffer data: " + bufferSize, null));
+        return;
+      }
+
+      // Use proper AudioRecord constructor with channel configuration
+      audioModel.setAudioRecorder(new AudioRecord(androidAudioSource, sampleRate, channelConfig, audioModel.audioFormat, bufferSize));
+      
+      if (audioModel.getAudioRecorder().getState() != AudioRecord.STATE_INITIALIZED) {
+        printError("AudioRecord failed to initialize");
+        mainHandler.post(() -> result.error(ERROR_FAILED_RECORDER_INITIALIZATION, "AudioRecord failed to initialize", null));
+        return;
+      }
+
+      audioModel.setAudioData(new short[bufferSize / 2]);
+      pitchModel.setPitchDetector(new FastYin(sampleRate, bufferSize / 2));
+      pitchModel.setTolerance(tolerance);
+      pitchModel.setTuning(tuning);
+
+    } catch (Exception e) {
+      printError("Failed to initialize recorder", e);
+      mainHandler.post(() -> result.error(ERROR_FAILED_RECORDER_INITIALIZATION, "Error: " + e.toString(), null));
+    }
+  }
+
+  public static void printError(String message, Exception err) {
+    Log.e(TAG, message + ". Error: " + err.toString());
+  }
+
+  public static void printError(String message) {
+    Log.e(TAG, message);
   }
 }
